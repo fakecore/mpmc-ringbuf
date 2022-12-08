@@ -1,7 +1,6 @@
 mod core;
 
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+left + right
 }
 
 #[cfg(test)]
@@ -11,7 +10,6 @@ mod tests {
     use super::*;
     #[test]
     fn it_works() {
-        let result = add(2, 2);
         let mut msg_queue = MsgQueue::new();
         msg_queue.set_subscription("hi".to_string());
         let control = match msg_queue.get_subscription("hi".to_string()){
@@ -21,6 +19,5 @@ mod tests {
         control.print_hello();
         println!("subscription-name:{}",control.subscription_name());
         println!("exist:{}",control.is_exist());
-        assert_eq!(result, 4);
     }
 }

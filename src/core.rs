@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::ptr::write;
 use std::sync::{Arc, Mutex};
-use std::thread::current;
+use std::thread::{current, sleep};
 use crate::core::BufferCacheMode::{dynamic, fixed};
 
 /**
@@ -131,18 +131,54 @@ impl BufferCache {
             r_page_index: 0
         }
     }
-    //fixed mode if
-    pub fn write(&mut self,data:Vec<u8>) -> bool {
+    //fixed mode:the coming data will overlap the exist data;
+    pub fn write(&mut self,data:Vec<u8>){
         let target_len = data.len() as u64;
         //only fixed mode need to calculate the
         if target_len > self.capacity()-self.size(){
             if self.mode == fixed {
-                return false;
+                if(target_len >= self.capacity()){
+                    let start_data_index = target_len-self.capacity()-1;
+                    for i in 0..self.buf_length{
+                        for j in 0..self.page_size{
+                            self.cache[i as usize][j as usize] = data[(start_data_index + i*self.page_size + j) as usize];
+                        }
+                    }
+                    self.size = self.buf_length * self.page_size - 1;
+                    self.r_index = 0;
+                    self.r_page_index = 0;
+                    self.w_index = self.page_size - 1;
+                    self.w_page_index = self.buf_length-1;
+                }else{
+                    let mut start_data_index = 0;
+                    let mut a_page_index = self.w_page_index;
+                    let mut a_index = self.w_index;
+                    for i in 0..target_len{
+                        self.cache[a_page_index as usize][a_index as usize] = data[i as usize];
+                        a_index += 1;
+                        if a_index == self.page_size{
+                            a_index = 0;
+                            a_page_index = (a_page_index + 1) & self.buf_length;
+                        }
+                    }
+                    self.w_page_index = a_page_index ;
+                    self.w_index = a_index;
+                    if a_index + 1 == self.page_size {
+                        self.r_index = 0;
+                        self.r_page_index = (self.r_page_index +1)%self.buf_length;
+                    }else{
+                        self.r_index = a_index + 1;
+                        self.r_page_index = a_page_index;
+                    }
+                    self.size = self.capacity();
+                }
+                //some data will be overlapped
             }else if self.mode == dynamic{
                 //expand a new vector for store
                 self.buf_length += 1;
                 self.cache.push(vec![0; self.page_size as usize]);
             }
+            return
         }
         let mut index = 0;
         while index != target_len {
@@ -150,7 +186,7 @@ impl BufferCache {
             let mut wrote_size = 0;
             let w_index = self.w_index;
             if free_space > target_len{
-                wrote_size = target_len;
+                wrote_size = target_len-index;
                 self.w_index += wrote_size;
             }else{
                 wrote_size = free_space;
@@ -164,7 +200,6 @@ impl BufferCache {
             }
         }
         self.size += target_len;
-        return true;
     }
 
 
@@ -175,11 +210,15 @@ impl BufferCache {
     //total buf capacity
     pub fn capacity(&self) -> u64 {
         if self.mode == fixed{
-            self.page_size*self.buf_length
+            self.page_size*self.buf_length - 1
         }else{
             //in dynamic mode, capacity is no meaningful
             0
         }
+    }
+
+    pub fn is_full(&mut self) -> bool {
+        self.capacity() == self.size()
     }
 
     pub fn read(&mut self, mut length: u64) ->Vec<u8>{
@@ -261,7 +300,7 @@ impl BufferCache {
         res
     }
 
-    pub fn realAll(&mut self) -> Vec<u8>{
+    pub fn readAll(&mut self) -> Vec<u8>{
         self.read(self.size())
     }
 
@@ -290,7 +329,7 @@ mod tests{
         let mut buf = BufferCache::new();
         assert_eq!(buf.mode(),BufferCacheMode::fixed);
         assert_eq!(buf.size(),0);
-        assert_eq!(buf.capacity(),4096 * 2);
+        assert_eq!(buf.capacity(),4096 * 2 - 1);
         assert_eq!(buf.read(3).len(),0);
         buf.write(vec![10,12]);
         assert_eq!(buf.size(),2);
@@ -302,8 +341,56 @@ mod tests{
         buf.write(vec![10,12]);
         buf.write(vec![255,12,1,2,3,4,5,6,2]);
 
-        assert_eq!(buf.size(),17);
+        buf.write(vec![0;4096*2]);
+        println!("size:{}",buf.size());
+        assert!(buf.is_full());
+        buf.readAll();
+        assert_eq!(buf.size(),0);
+        buf.write(vec![0;4096*3]);
+        assert!(buf.is_full());
+        buf.read(4096);
+        assert_eq!(buf.size(),4095);
     }
+
+
+    #[test]
+    fn test_overlap(){
+        let mut buf = BufferCache::new();
+        //read 0,0 write 1,4095
+        buf.write(vec![0;4096*3]);
+
+        //read 0,2000 write 1,4095
+        buf.read(2000);
+
+        assert_eq!(buf.r_index,2000);
+        //read 0,2000 write 0,999
+        buf.write(vec![0;1000]);
+        assert_eq!(buf.r_index,2000);
+        assert_eq!(buf.r_page_index,0);
+        assert_eq!(buf.w_index,999);
+        assert_eq!(buf.w_page_index,0);
+        //read 1,
+        buf.write(vec![0;3095]);
+        assert_eq!(buf.is_full(),true);
+        assert_eq!(buf.r_index,4095);
+        assert_eq!(buf.w_index,4094);
+        assert_eq!(buf.r_page_index,0);
+        assert_eq!(buf.w_page_index,0);
+
+        buf.read(200);
+        assert_eq!(buf.r_index,199);
+        assert_eq!(buf.w_index,4094);
+        assert_eq!(buf.r_page_index,1);
+        assert_eq!(buf.w_page_index,0);
+
+        buf.write(vec![0;100]);
+        assert_eq!(buf.r_index,199);
+        assert_eq!(buf.w_index,98);
+        assert_eq!(buf.r_page_index,1);
+        assert_eq!(buf.w_page_index,1);
+
+    }
+
 }
 
 
