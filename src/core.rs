@@ -304,19 +304,35 @@ impl BufferCache {
         self.read(self.size())
     }
 
-    pub fn mode(&self) -> BufferCacheMode {
-        self.mode
-    }
-
     fn read_page_add(&mut self){
         self.r_page_index = (self.r_page_index +1 )%self.buf_length;
     }
 
-    pub fn setDynamicMode(){
-
+    pub fn mode(&self) -> BufferCacheMode {
+        self.mode
     }
-    pub fn setFixedMode(){
 
+    pub fn setDynamicMode(&mut self,buf_length:u64,page_size:u64){
+        self.buf_length = buf_length;
+        self.page_size = page_size;
+        self.cache = vec![vec![0;page_size as usize];buf_length as usize];
+        self.mode = BufferCacheMode::fixed;
+        self.w_index = 0;
+        self.r_index = 0;
+        self.size = 0;
+        self.w_page_index = 0;
+        self.r_page_index = 0;
+    }
+    pub fn setFixedMode(&mut self,page_size:u64){
+        self.buf_length = 2;//default buf length is 2
+        self.page_size = page_size;
+        self.cache = vec![vec![0;page_size as usize];buf_length as usize];
+        self.mode = BufferCacheMode::dynamic;
+        self.w_index = 0;
+        self.r_index = 0;
+        self.size = 0;
+        self.w_page_index = 0;
+        self.r_page_index = 0;
     }
 }
 

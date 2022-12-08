@@ -1,8 +1,5 @@
 mod core;
 
-left + right
-}
-
 #[cfg(test)]
 mod tests {
     use std::process::exit;
