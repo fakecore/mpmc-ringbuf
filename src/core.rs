@@ -6,7 +6,7 @@ use std::thread::{current, sleep};
 use crate::core::BufferCacheMode::{dynamic, fixed};
 
 /**
- *@Project: ymir
+ *@Project: ringbuf
  *@FileName: core.rs
  *@Author: FakeCore
  *@CreateTime: 2022-12-06 00:42

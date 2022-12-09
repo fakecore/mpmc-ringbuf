@@ -1,4 +1,4 @@
-# ymir
-A Rust ringbuf queue with topic subscription
+# Ringbuf
+A Rust SPMC ringbuf queue with topic subscription
 
 ## feature
