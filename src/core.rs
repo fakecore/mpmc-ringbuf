@@ -138,6 +138,7 @@ impl BufferCache {
         if target_len > self.capacity()-self.size(){
             if self.mode == fixed {
                 if(target_len >= self.capacity()){
+                    //only get the capacity size data
                     let start_data_index = target_len-self.capacity()-1;
                     for i in 0..self.buf_length{
                         for j in 0..self.page_size{
@@ -175,29 +176,107 @@ impl BufferCache {
                 //some data will be overlapped
             }else if self.mode == dynamic{
                 //expand a new vector for store
-                self.buf_length += 1;
-                self.cache.push(vec![0; self.page_size as usize]);
+
+                // self.buf_length += 1;
+                // self.cache.push(vec![0; self.page_size as usize]);
+
+                //length resize
+                //ceil((cur length + new data size) / 4096) * 2
+                // self.cache.resize()
+                self.size += target_len;
+
+                let target_buf_length = (self.buf_length + math::round::ceil(target_len as f64 / self.page_size as f64,0) as u64) * 2;
+                let old_buf_length = self.buf_length;
+                self.buf_length = target_buf_length;
+                self.cache.resize(target_buf_length as usize, vec![0; self.page_size as usize]);
+                if(self.w_page_index <= self.r_page_index && self.w_index <= self.r_index) {
+                    //r < w
+                    let mut new_w_index = self.w_index;
+                    let mut new_w_page_index = old_buf_length;
+                    assert_eq!(self.w_index, 0);
+                    assert_eq!(self.w_page_index, 0);
+                    let mut old_w_index = self.w_index;
+                    let mut old_w_page_index = self.w_page_index;
+                    for i in 0..(self.page_size * self.w_page_index + self.w_index) {
+                        self.cache[new_w_page_index as usize][new_w_index as usize] = self.cache[old_w_page_index as usize][old_w_index as usize];
+                        new_w_index += 1;
+                        if new_w_index == self.page_size {
+                            new_w_page_index += 1;
+                            new_w_index = 0;
+                        }
+                        old_w_index += 1;
+                        if old_w_index == self.page_size {
+                            old_w_page_index += 1;
+                            old_w_index = 0;
+                        }
+                    }
+
+                    self.w_page_index = new_w_page_index;
+                    self.w_index = new_w_index;
+                }
+
+                //w > r
+                //move read -> write
+                let mut r_index = self.r_index;
+                let mut r_page_index = self.r_page_index;
+
+                let mut n_r_index = self.r_index;
+                let mut n_r_page_index = self.r_page_index;
+                for i in 0..self.size(){
+                    self.cache[n_r_page_index as usize][n_r_index as usize] = self.cache[r_page_index as usize][r_index as usize];
+                    r_index += 1;
+                    if(r_index == self.page_size){
+                        r_page_index += 1;
+                        r_index = 0;
+                    }
+                    n_r_index += 1;
+                    if(n_r_index == self.page_size){
+                        n_r_page_index += 1;
+                        n_r_index = 0;
+                    }
+                }
+
+                let mut w_index = self.w_index;
+                for i in 0..target_len {
+                    self.cache[self.w_page_index as usize][w_index as usize] = data[i as usize];
+                    w_index += 1;
+                    if w_index == self.page_size{
+                        w_index = 0;
+                        self.w_page_index += 1;
+                    }
+                }
+                // if self.r_index != 0 {
+                //
+                // }
+                // for i in self.size{
+                //     self.size
+                // }
+
+
             }
             return
         }
-        let mut index = 0;
-        while index != target_len {
-            let free_space = self.page_size-self.w_index;
-            let mut wrote_size = 0;
-            let w_index = self.w_index;
-            if free_space > target_len{
-                wrote_size = target_len-index;
-                self.w_index += wrote_size;
+        let mut index = target_len;
+        while index != 0 {
+            let mut free_space = 0;
+            let mut wrote_size = self.page_size-self.w_index;
+
+            let mut w_index = self.w_index;
+            let mut w_page_index = self.w_page_index;
+
+            if index < wrote_size{
+                wrote_size = index;
+                self.w_index = index;
             }else{
-                wrote_size = free_space;
                 self.w_page_index = (self.w_page_index+1) % self.buf_length;
                 self.w_index = 0;
             }
-            index += wrote_size;
             println!("wrote_size:{}",wrote_size);
             for i in 0..wrote_size{
-                self.cache[self.w_page_index as usize][(w_index+i) as usize] = data[i as usize];
+                //fix me
+                self.cache[w_page_index as usize][(w_index+i) as usize] = data[i as usize];
             }
+            index -= wrote_size;
         }
         self.size += target_len;
     }
@@ -207,13 +286,15 @@ impl BufferCache {
     pub fn size(&self) -> u64 {
         return self.size;
     }
+
     //total buf capacity
     pub fn capacity(&self) -> u64 {
         if self.mode == fixed{
             self.page_size*self.buf_length - 1
         }else{
             //in dynamic mode, capacity is no meaningful
-            0
+            //TODO Does dynamic uses the same strategy like fixed
+            self.page_size*self.buf_length
         }
     }
 
@@ -297,6 +378,15 @@ impl BufferCache {
             lens -= (read_index_end-read_index_start);
         }
         self.size -= length;
+        if self.size == 0 {
+            //reset index
+            self.w_page_index = 0;
+            self.w_index = 0;
+            self.r_page_index = 0;
+            self.r_index = 0;
+            //fixme
+            //resize in dynamic mode
+        }
         res
     }
 
@@ -312,7 +402,7 @@ impl BufferCache {
         self.mode
     }
 
-    pub fn setDynamicMode(&mut self,buf_length:u64,page_size:u64){
+    pub fn setFixedMode(&mut self,buf_length:u64,page_size:u64){
         self.buf_length = buf_length;
         self.page_size = page_size;
         self.cache = vec![vec![0;page_size as usize];buf_length as usize];
@@ -323,10 +413,10 @@ impl BufferCache {
         self.w_page_index = 0;
         self.r_page_index = 0;
     }
-    pub fn setFixedMode(&mut self,page_size:u64){
+    pub fn setDynamicMode(&mut self,page_size:u64){
         self.buf_length = 2;//default buf length is 2
         self.page_size = page_size;
-        self.cache = vec![vec![0;page_size as usize];buf_length as usize];
+        self.cache = vec![vec![0;page_size as usize];self.buf_length as usize];
         self.mode = BufferCacheMode::dynamic;
         self.w_index = 0;
         self.r_index = 0;
@@ -340,7 +430,7 @@ impl BufferCache {
 mod tests{
     use crate::core::{BufferCache, BufferCacheMode};
 
-    #[test]
+    // #[test]
     fn test_buff_cache(){
         let mut buf = BufferCache::new();
         assert_eq!(buf.mode(),BufferCacheMode::fixed);
@@ -369,9 +459,14 @@ mod tests{
     }
 
 
-    #[test]
+    // #[test]
     fn test_overlap(){
         let mut buf = BufferCache::new();
+        println!("start");
+        buf.write(vec![0;6000]);
+        println!("end");
+        assert_eq!(buf.w_index,6000-4096);
+        assert_eq!(buf.w_page_index,1);
         //read 0,0 write 1,4095
         buf.write(vec![0;4096*3]);
 
@@ -404,8 +499,22 @@ mod tests{
         assert_eq!(buf.w_index,98);
         assert_eq!(buf.r_page_index,1);
         assert_eq!(buf.w_page_index,1);
-
     }
+
+
+    #[test]
+    fn test_dynamic_mode(){
+        let mut buf = BufferCache::new();
+        buf.setDynamicMode(4096);
+        buf.write(vec![0;4096*2]);
+        assert_eq!(buf.is_full(),true);
+        assert_eq!(buf.size(),4096*2);
+        buf.write(vec![0;1]);
+        assert_eq!(buf.size(),4096*2+1);
+        assert_eq!(buf.capacity(),4096*6);
+    }
+
+
 
 }
 
