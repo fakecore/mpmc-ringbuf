@@ -1,5 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::fs::read;
 use std::ptr::write;
 use std::sync::{Arc, Mutex};
 use std::thread::{current, sleep};
@@ -24,6 +25,7 @@ pub struct MsgQueueControl<'a>{
     subscription_name:String,
 }
 
+//main
 impl MsgQueue{
     pub fn new() -> MsgQueue{
         MsgQueue{
@@ -81,13 +83,28 @@ impl MsgQueueControl<'_>{
     }
 
     pub fn push_data(&mut self,data:Vec<u8>){
+        self.msg_queue.lock().unwrap().buf.get_mut(&*self.subscription_name).unwrap().write(data);
+        // buf.write(data);
+    }
+
+    pub fn size(&mut self)->u64{
+        return self.msg_queue.lock().unwrap().buf.get(&*self.subscription_name).unwrap().size();
+    }
+
+    pub fn read(&mut self,length:u64)->Vec<u8>{
+        return self.msg_queue.lock().unwrap().buf.get_mut(&*self.subscription_name).unwrap().read(length);
+    }
+
+    pub fn read_all(&mut self)->Vec<u8>{
+        let size = self.size();
+        self.read(size)
     }
 
     pub fn get_data(&mut self,len:u64)->Vec<u8>{
         vec![]
     }
 
-    pub async fn readable(){
+    pub async fn readable(&mut self){
 
     }
 
@@ -305,14 +322,14 @@ impl BufferCache {
     //only read available data
     pub fn read(&mut self, mut length: u64) ->Vec<u8>{
         let mut lens = length;
+        //check whether buf has enough data for reading
         if lens > self.size(){
             lens = self.size();
         }
-        //check whether buf has enough data for reading
-        let mut res = vec![];
-        if self.size() < lens {
-            return res
+        if lens == 0 {
+            return vec![]
         }
+        let mut res = vec![];
         while lens != 0{
             let mut read_size = 0;
             let read_index_start = self.r_index ;
