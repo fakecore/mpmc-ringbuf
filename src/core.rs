@@ -302,8 +302,12 @@ impl BufferCache {
         self.capacity() == self.size()
     }
 
+    //only read available data
     pub fn read(&mut self, mut length: u64) ->Vec<u8>{
         let mut lens = length;
+        if lens > self.size(){
+            lens = self.size();
+        }
         //check whether buf has enough data for reading
         let mut res = vec![];
         if self.size() < lens {
