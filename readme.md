@@ -1,4 +1,4 @@
 # Ringbuf
-A Rust SPMC ringbuf queue with topic subscription
+A Rust MPMC ringbuf queue with topic subscription
 
 ## feature
