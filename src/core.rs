@@ -411,7 +411,7 @@ impl BufferCache {
         res
     }
 
-    pub fn readAll(&mut self) -> Vec<u8>{
+    pub fn read_all(&mut self) -> Vec<u8>{
         self.read(self.size())
     }
 
@@ -423,7 +423,7 @@ impl BufferCache {
         self.mode
     }
 
-    pub fn setFixedMode(&mut self,buf_length:u64,page_size:u64){
+    pub fn set_fixed_mode(&mut self, buf_length:u64, page_size:u64){
         self.buf_length = buf_length;
         self.page_size = page_size;
         self.cache = vec![vec![0;page_size as usize];buf_length as usize];
@@ -434,7 +434,7 @@ impl BufferCache {
         self.w_page_index = 0;
         self.r_page_index = 0;
     }
-    pub fn setDynamicMode(&mut self,page_size:u64){
+    pub fn set_dynamic_mode(&mut self, page_size:u64){
         self.buf_length = 2;//default buf length is 2
         self.page_size = page_size;
         self.cache = vec![vec![0;page_size as usize];self.buf_length as usize];
@@ -444,6 +444,10 @@ impl BufferCache {
         self.size = 0;
         self.w_page_index = 0;
         self.r_page_index = 0;
+    }
+
+    pub fn readable(&self)->bool{
+        self.size() != 0
     }
 }
 
@@ -471,7 +475,7 @@ mod tests{
         buf.write(vec![0;4096*2]);
         println!("size:{}",buf.size());
         assert!(buf.is_full());
-        buf.readAll();
+        buf.read_all();
         assert_eq!(buf.size(),0);
         buf.write(vec![0;4096*3]);
         assert!(buf.is_full());
@@ -526,7 +530,7 @@ mod tests{
     #[test]
     fn test_dynamic_mode(){
         let mut buf = BufferCache::new();
-        buf.setDynamicMode(4096);
+        buf.set_dynamic_mode(4096);
         buf.write(vec![0;4096*2]);
         assert_eq!(buf.is_full(),true);
         assert_eq!(buf.size(),4096*2);
