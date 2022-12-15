@@ -5,24 +5,13 @@ mod tests {
     use std::cell::RefCell;
     use std::process::exit;
     use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use crate::core::{MsgQueue, MsgQueueReader};
     use super::*;
-    #[test]
-    fn it_works() {
-        // let mut msg_queue = MsgQueue::new();
-        // msg_queue.set_subscription("hi".to_string());
-        // let control = match msg_queue.get_subscription("hi".to_string()){
-        //     Ok(control) =>{ control },
-        //     Err(str) => {panic!("err:{}",str)}
-        // };
-        // control.print_hello();
-        // println!("subscription-name:{}",control.subscription_name());
-        // println!("exist:{}",control.is_exist());
-    }
 
     #[test]
-    fn test_msg_queue() {
+    fn test_single_thread_msg_queue() {
         let mut msg_queue:MsgQueue<u8> = MsgQueue::new();
         let mut writer1 = msg_queue.add_producer();
         let mut read1 = msg_queue.add_consumer();
@@ -43,28 +32,47 @@ mod tests {
 
     #[test]
     fn test_multi_thread_msg_queue() {
-        // let mut msg_queue:Rc<RefCell<MsgQueue<u8>>> = Rc::new(RefCell::new(MsgQueue::new()));
-        // let m1 = msg_queue.clone();
-        // let m2 = msg_queue.clone();
-        // let mut c1 = (*msg_queue).get_mut().add_consumer();
-        // let mut c2 = (*msg_queue).get_mut().add_consumer();
-        // let t1 = thread::spawn(move || {
-        //     let p = (*m1).borrow().add_producer();
-        //     for i in 0..100{
-        //         p.write(vec![0;5]);
-        //     }
-        // });
-        //
-        // let t2 = thread::spawn(move || {
-        //     let p = (*m1).borrow().add_producer();
-        //     for i in 0..100{
-        //         p.write(vec![0;5]);
-        //     }
-        // });
-        // t1.join();
-        // t2.join();
-        // assert_eq!(c1.size(),1000);
-        // assert_eq!(c2.size(),1000);
+        let mut msg_queue: Arc<Mutex<MsgQueue<u8>>> = Arc::new(Mutex::new(MsgQueue::new()));
+        let m1 = msg_queue.clone();
+        let m2 = msg_queue.clone();
+        let mut c1_id = 0;
+        let mut c2_id = 0;
+        {
+            let mut msg_lock = (*msg_queue).lock().unwrap();
+            let mut c1 = msg_lock.add_consumer();
+            let mut c2 = msg_lock.add_consumer();
+            c1_id = c1.id();
+            c2_id = c2.id();
+        }
+        assert_eq!(msg_queue.lock().unwrap().get_consumer_count(),2);
+        let t1 = thread::spawn(move || {
+            let mut msg_lock = (*m1).lock().unwrap();
+            println!("get lock1");
+            let p = msg_lock.add_producer();
+            for i in 0..100{
+                p.write(vec![0;5]);
+            }
+        });
+
+        let t2 = thread::spawn(move || {
+            let mut msg_lock = (*m2).lock().unwrap();
+            println!("get lock1");
+            let p = msg_lock.add_producer();
+            for i in 0..100{
+                p.write(vec![0;5]);
+            }
+        });
+        t1.join();
+        t2.join();
+        {
+            let mut msg_lock = (*msg_queue).lock().unwrap();
+            assert_eq!(msg_lock.get_consumer_count(),2);
+            let mut c1 = msg_lock.get_consumer(c1_id);
+            let mut c2 = msg_lock.get_consumer(c2_id);
+            println!("size: {} {}",c1.size(),c2.size());
+            assert_eq!(c1.size(),1000);
+            assert_eq!(c2.size(),1000);
+        }
     }
 
 }

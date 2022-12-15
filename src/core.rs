@@ -14,11 +14,19 @@ use crate::core::BufferCacheMode::{dynamic, fixed};
  */
 
 
-
 pub struct MsgQueue<T> {
     // buf:HashMap<String,BufferCache>,
     inner:Rc<RefCell<MsgQueueInner<T>>>,
     serialNo:u64,
+}
+
+unsafe impl<T> Sync for MsgQueue<T>
+{
+
+}
+unsafe impl<T> Send for MsgQueue<T>
+{
+
 }
 
 
@@ -38,6 +46,14 @@ impl<T> MsgQueue<T>
 
     pub fn add_producer(&mut self) -> MsgQueueWriter<T>{
         MsgQueueWriter{
+            inner: self.inner.clone()
+        }
+    }
+    pub fn get_consumer(&mut self,id:u64)->MsgQueueReader<T>{
+        let mut buf = (*self.inner).borrow_mut();
+        buf.add_buffer_cache(id);
+        MsgQueueReader{
+            id: id,
             inner: self.inner.clone()
         }
     }
@@ -73,7 +89,9 @@ where T:Default+Clone+Copy
     }
 
     pub fn add_buffer_cache(&mut self, id:u64){
-        self.buf.insert(id,BufferCache::new());
+        if !self.buf.contains_key(&id){
+            self.buf.insert(id,BufferCache::new());
+        }
     }
 
     pub fn get_buffer_cache(&mut self, id:u64) -> Option<&mut BufferCache<T>> {
@@ -116,12 +134,16 @@ impl<T> MsgQueueReader<T>
         bc.size
     }
 
+    pub fn id(&self)->u64{
+        self.id
+    }
+
 }
 impl<T> MsgQueueWriter<T>
     where T:Default + Clone + Copy
 {
     pub fn write(&self,data:Vec<T>){
-        println!("{}",(*self.inner).borrow_mut().buf.len());
+        println!("writing size:{}",(*self.inner).borrow_mut().buf.len());
         for (index,buf) in (*self.inner).borrow_mut().buf.iter_mut(){
             buf.write(data.to_vec());
         }
@@ -305,7 +327,7 @@ where T:Default + Clone + Copy
 
             if index < wrote_size{
                 wrote_size = index;
-                self.w_index = index;
+                self.w_index += index;
             }else{
                 self.w_page_index = (self.w_page_index+1) % self.buf_length;
                 self.w_index = 0;
