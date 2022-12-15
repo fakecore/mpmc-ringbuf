@@ -3,6 +3,7 @@ use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::DerefMut;
+use std::process::id;
 use std::rc::Rc;
 
 /**
@@ -40,6 +41,7 @@ where
             inner: self.inner.clone(),
         }
     }
+
     pub fn get_consumer(&mut self, id: u64) -> MsgQueueReader<T> {
         let mut buf = (*self.inner).borrow_mut();
         buf.add_buffer_cache(id);
@@ -59,8 +61,13 @@ where
             inner: self.inner.clone(),
         }
     }
+
     pub fn get_consumer_count(&self) -> u64 {
         (*self.inner).borrow().buf.len() as u64
+    }
+
+    pub fn delete_consumer(&mut self, id: u64) {
+        (*self.inner).borrow().delete_buffer_cache(id)
     }
 }
 
@@ -88,6 +95,12 @@ where
             self.buf.insert(id, BufferCache::new());
         }
         self.buf.get_mut(&id)
+    }
+
+    pub fn delete_buffer_cache(&mut self, id: u64) {
+        if !self.buf.contains_key(&id) {
+            self.buf.remove(&id);
+        }
     }
 }
 
