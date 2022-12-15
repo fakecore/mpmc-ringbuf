@@ -1,9 +1,8 @@
-use std::borrow::Borrow;
+use std::borrow::{ BorrowMut};
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fs::read;
-use std::ptr::write;
-use std::sync::{Arc, Mutex};
-use std::thread::{current, sleep};
+use std::ops::DerefMut;
+use std::rc::Rc;
 use crate::core::BufferCacheMode::{dynamic, fixed};
 
 /**
@@ -16,99 +15,117 @@ use crate::core::BufferCacheMode::{dynamic, fixed};
 
 
 
-pub struct MsgQueue {
-    buf:HashMap<String,BufferCache>,
+pub struct MsgQueue<T> {
+    // buf:HashMap<String,BufferCache>,
+    inner:Rc<RefCell<MsgQueueInner<T>>>,
+    serialNo:u64,
 }
 
-pub struct MsgQueueControl<'a>{
-    msg_queue:Arc<Mutex<&'a mut MsgQueue>>,
-    subscription_name:String,
-}
 
 //main
-impl MsgQueue{
-    pub fn new() -> MsgQueue{
+impl<T> MsgQueue<T>
+    where T:Default + Clone + Copy
+{
+    pub fn new() -> MsgQueue<T>{
+        let inner = Rc::new(RefCell::new(MsgQueueInner{
+            buf:HashMap::new(),
+        }));
         MsgQueue{
-            buf: Default::default()
+            inner: inner.clone(),
+            serialNo:0
         }
     }
 
-    pub fn set_subscription(&mut self,channel_name:String){
-        if self.buf.contains_key(&channel_name) {
-            return
-        }
-        self.buf.insert(channel_name,BufferCache::new());
-        // return MsgQueueControl::new( Arc::new(Mutex::new(self)))
-    }
-
-    pub fn get_subscription<'a>(&mut self, channel_name:String) -> Result<MsgQueueControl, String> {
-        if !self.buf.contains_key(&channel_name) {
-            Err("Key is not exist".to_string())
-        } else {
-            Ok(MsgQueueControl::new(Arc::new(Mutex::new(self)),channel_name))
+    pub fn add_producer(&mut self) -> MsgQueueWriter<T>{
+        MsgQueueWriter{
+            inner: self.inner.clone()
         }
     }
 
-    pub fn get_buf<'a>(&mut self, channel_name:String) -> Result<Arc<Mutex<&mut BufferCache>>, String> {
-        if self.buf.contains_key(&channel_name) {
-            Err("Key is not exist".to_string())
-        } else {
-            Ok(Arc::new(Mutex::new(self.buf.get_mut(&channel_name).unwrap())))
+    pub fn add_consumer(&mut self)->MsgQueueReader<T>{
+        let id = self.serialNo;
+        self.serialNo += 1;
+        let mut buf = (*self.inner).borrow_mut();
+        buf.add_buffer_cache(id);
+        MsgQueueReader{
+            id: id,
+            inner: self.inner.clone()
         }
     }
+    pub fn get_consumer_count(&self) -> u64{
+        (*self.inner).borrow().buf.len() as u64
 
-    pub fn print_hello(&self){
-        println!("hello world");
     }
 }
 
-impl MsgQueueControl<'_>{
-    pub fn new(queue: Arc<Mutex<&mut MsgQueue>>, channel_name:String) ->MsgQueueControl{
-        MsgQueueControl{
-            msg_queue:queue,
-            subscription_name:channel_name,
+
+pub struct MsgQueueInner<T>{
+    buf:HashMap<u64,BufferCache<T>>,
+}
+
+impl<T> MsgQueueInner<T>
+where T:Default+Clone+Copy
+{
+    pub fn write(&mut self,data:Vec<T>){
+    }
+    pub fn read(&mut self,id:u64,size:u64)->Vec<T>{
+        self.buf.get_mut(&id).unwrap().read(size)
+    }
+
+    pub fn add_buffer_cache(&mut self, id:u64){
+        self.buf.insert(id,BufferCache::new());
+    }
+
+    pub fn get_buffer_cache(&mut self, id:u64) -> Option<&mut BufferCache<T>> {
+        if !self.buf.contains_key(&id){
+            self.buf.insert(id,BufferCache::new());
+        }
+        self.buf.get_mut(&id)
+    }
+
+}
+
+
+pub struct MsgQueueReader<T>
+{
+    id:u64,
+    inner:Rc<RefCell<MsgQueueInner<T>>>,
+}
+
+pub struct MsgQueueWriter<T>
+{
+    inner:Rc<RefCell<MsgQueueInner<T>>>,
+}
+
+impl<T> MsgQueueReader<T>
+    where T:Default + Clone + Copy
+{
+    pub fn read(&mut self, size:u64)->Vec<T>{
+        // let buf = self.inner.borrow_mut().get_mut().buf[&self.id];
+        let mut buf = (*self.inner).borrow_mut();
+        // buf.buf.get(&self.id)
+        buf.read(self.id,size)
+    }
+    pub fn read_all(&mut self){
+        let size = self.size();
+        self.read( size);
+    }
+    pub fn size(&mut self)->u64{
+        let mut buf = (*self.inner).borrow_mut();
+        let bc = buf.get_buffer_cache(self.id).unwrap();
+        bc.size
+    }
+
+}
+impl<T> MsgQueueWriter<T>
+    where T:Default + Clone + Copy
+{
+    pub fn write(&self,data:Vec<T>){
+        println!("{}",(*self.inner).borrow_mut().buf.len());
+        for (index,buf) in (*self.inner).borrow_mut().buf.iter_mut(){
+            buf.write(data.to_vec());
         }
     }
-
-    pub fn print_hello(&self){
-        self.msg_queue.lock().unwrap().print_hello();
-    }
-
-    pub fn subscription_name(&self) -> String {
-        self.subscription_name.clone()
-    }
-
-    pub fn is_exist(&self) -> bool{
-        self.msg_queue.lock().unwrap().buf.contains_key(&self.subscription_name)
-    }
-
-    pub fn push_data(&mut self,data:Vec<u8>){
-        self.msg_queue.lock().unwrap().buf.get_mut(&*self.subscription_name).unwrap().write(data);
-        // buf.write(data);
-    }
-
-    pub fn size(&mut self)->u64{
-        return self.msg_queue.lock().unwrap().buf.get(&*self.subscription_name).unwrap().size();
-    }
-
-    pub fn read(&mut self,length:u64)->Vec<u8>{
-        return self.msg_queue.lock().unwrap().buf.get_mut(&*self.subscription_name).unwrap().read(length);
-    }
-
-    pub fn read_all(&mut self)->Vec<u8>{
-        let size = self.size();
-        self.read(size)
-    }
-
-    pub fn get_data(&mut self,len:u64)->Vec<u8>{
-        vec![]
-    }
-
-    pub async fn readable(&mut self){
-
-    }
-
-
 }
 
 #[derive(Clone,Copy,PartialEq,Debug)]
@@ -117,8 +134,11 @@ enum BufferCacheMode{
     dynamic,
 }
 
-pub struct BufferCache{
-    cache:Vec<Vec<u8>>,
+// BufferCache<T> is implemented with a multi-block circular buffer.
+//
+#[derive(PartialEq)]
+pub struct BufferCache<T>{
+    cache:Vec<Vec<T>>,
     mode:BufferCacheMode,
     buf_length:u64,//cache.size()
     page_size:u64,
@@ -131,11 +151,13 @@ pub struct BufferCache{
 }
 
 //using capacity()-1 == size() as the sign of buf is full.
-impl BufferCache {
-    pub fn new () -> BufferCache {
+impl<T> BufferCache<T>
+where T:Default + Clone + Copy
+{
+    pub fn new () -> BufferCache<T> {
         let page_size = 4096;
         let buf_length = 2;
-        let buf_cache = vec![vec![0; page_size]; buf_length];
+        let buf_cache = vec![vec![T::default(); page_size]; buf_length];
         BufferCache{
             cache: buf_cache,
             mode: BufferCacheMode::fixed,
@@ -149,7 +171,7 @@ impl BufferCache {
         }
     }
     //fixed mode:the coming data will overlap the exist data;
-    pub fn write(&mut self,data:Vec<u8>){
+    pub fn write(&mut self,data:Vec<T>){
         let target_len = data.len() as u64;
         //only fixed mode need to calculate the
         if target_len > self.capacity()-self.size(){
@@ -205,7 +227,7 @@ impl BufferCache {
                 let target_buf_length = (self.buf_length + math::round::ceil(target_len as f64 / self.page_size as f64,0) as u64) * 2;
                 let old_buf_length = self.buf_length;
                 self.buf_length = target_buf_length;
-                self.cache.resize(target_buf_length as usize, vec![0; self.page_size as usize]);
+                self.cache.resize(target_buf_length as usize, vec![T::default(); self.page_size as usize]);
                 if(self.w_page_index <= self.r_page_index && self.w_index <= self.r_index) {
                     //r < w
                     let mut new_w_index = self.w_index;
@@ -320,7 +342,7 @@ impl BufferCache {
     }
 
     //only read available data
-    pub fn read(&mut self, mut length: u64) ->Vec<u8>{
+    pub fn read(&mut self, mut length: u64) ->Vec<T>{
         let mut lens = length;
         //check whether buf has enough data for reading
         if lens > self.size(){
@@ -411,8 +433,9 @@ impl BufferCache {
         res
     }
 
-    pub fn read_all(&mut self) -> Vec<u8>{
-        self.read(self.size())
+    pub fn read_all(&mut self) -> Vec<T>{
+        // self.read(self.size())
+        vec![]
     }
 
     fn read_page_add(&mut self){
@@ -426,7 +449,7 @@ impl BufferCache {
     pub fn set_fixed_mode(&mut self, buf_length:u64, page_size:u64){
         self.buf_length = buf_length;
         self.page_size = page_size;
-        self.cache = vec![vec![0;page_size as usize];buf_length as usize];
+        self.cache = vec![vec![T::default();page_size as usize];buf_length as usize];
         self.mode = BufferCacheMode::fixed;
         self.w_index = 0;
         self.r_index = 0;
@@ -437,7 +460,7 @@ impl BufferCache {
     pub fn set_dynamic_mode(&mut self, page_size:u64){
         self.buf_length = 2;//default buf length is 2
         self.page_size = page_size;
-        self.cache = vec![vec![0;page_size as usize];self.buf_length as usize];
+        self.cache = vec![vec![T::default();page_size as usize];self.buf_length as usize];
         self.mode = BufferCacheMode::dynamic;
         self.w_index = 0;
         self.r_index = 0;
@@ -542,5 +565,4 @@ mod tests{
 
 
 }
-
 
