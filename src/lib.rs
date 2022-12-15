@@ -74,4 +74,21 @@ mod tests {
             assert_eq!(c2.size(), 1000);
         }
     }
+
+    #[test]
+    fn test_string(){
+        let mut msg_queue = Rc::new(RefCell::new(MsgQueue::<String>::new()));
+        let mut c1 = msg_queue.borrow_mut().add_consumer();
+        let mut p1 = msg_queue.borrow_mut().add_producer();
+        p1.write(vec!["hello".to_string(),"world".to_string()]);
+        assert_eq!(c1.size(),2);
+        let data = c1.read_all();
+        assert_eq!(c1.size(),0);
+        assert_eq!(data.len(),2);
+        assert_eq!(data.get(0).unwrap().to_string(),"hello".to_string());
+        assert_eq!(data.get(1).unwrap().to_string(),"world".to_string());
+        for i in data{
+            print!("{:?} ",i);
+        }
+    }
 }

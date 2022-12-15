@@ -24,7 +24,7 @@ unsafe impl<T> Send for MsgQueue<T> {}
 
 impl<T> MsgQueue<T>
 where
-    T: Default + Clone + Copy,
+    T: Default + Clone,
 {
     pub fn new() -> MsgQueue<T> {
         let inner = Rc::new(RefCell::new(MsgQueueInner {
@@ -67,7 +67,7 @@ where
     }
 
     pub fn delete_consumer(&mut self, id: u64) {
-        (*self.inner).borrow().delete_buffer_cache(id)
+        (*self.inner).borrow_mut().delete_buffer_cache(id)
     }
 }
 
@@ -77,7 +77,7 @@ pub struct MsgQueueInner<T> {
 
 impl<T> MsgQueueInner<T>
 where
-    T: Default + Clone + Copy,
+    T: Default + Clone,
 {
     pub fn write(&mut self, data: Vec<T>) {}
     pub fn read(&mut self, id: u64, size: u64) -> Vec<T> {
@@ -115,15 +115,15 @@ pub struct MsgQueueWriter<T> {
 
 impl<T> MsgQueueReader<T>
 where
-    T: Default + Clone + Copy,
+    T: Default + Clone ,
 {
     pub fn read(&mut self, size: u64) -> Vec<T> {
         let mut buf = (*self.inner).borrow_mut();
         buf.read(self.id, size)
     }
-    pub fn read_all(&mut self) {
+    pub fn read_all(&mut self) -> Vec<T>{
         let size = self.size();
-        self.read(size);
+        self.read(size)
     }
     pub fn size(&mut self) -> u64 {
         let mut buf = (*self.inner).borrow_mut();
@@ -137,10 +137,9 @@ where
 }
 impl<T> MsgQueueWriter<T>
 where
-    T: Default + Clone + Copy,
+    T: Default + Clone ,
 {
     pub fn write(&self, data: Vec<T>) {
-        println!("writing size:{}", (*self.inner).borrow_mut().buf.len());
         for (index, buf) in (*self.inner).borrow_mut().buf.iter_mut() {
             buf.write(data.to_vec());
         }
@@ -170,7 +169,7 @@ pub struct BufferCache<T> {
 //using capacity()-1 == size() as the sign of buf is full.
 impl<T> BufferCache<T>
 where
-    T: Default + Clone + Copy,
+    T: Default + Clone,
 {
     pub fn new() -> BufferCache<T> {
         let page_size = 4096;
@@ -200,7 +199,7 @@ where
                     for i in 0..self.buf_length {
                         for j in 0..self.page_size {
                             self.cache[i as usize][j as usize] =
-                                data[(start_data_index + i * self.page_size + j) as usize];
+                                data[(start_data_index + i * self.page_size + j) as usize].clone();
                         }
                     }
                     self.size = self.buf_length * self.page_size - 1;
@@ -213,7 +212,7 @@ where
                     let mut a_page_index = self.w_page_index;
                     let mut a_index = self.w_index;
                     for i in 0..target_len {
-                        self.cache[a_page_index as usize][a_index as usize] = data[i as usize];
+                        self.cache[a_page_index as usize][a_index as usize] = data[i as usize].clone();
                         a_index += 1;
                         if a_index == self.page_size {
                             a_index = 0;
@@ -262,7 +261,7 @@ where
                     let mut old_w_page_index = self.w_page_index;
                     for i in 0..(self.page_size * self.w_page_index + self.w_index) {
                         self.cache[new_w_page_index as usize][new_w_index as usize] =
-                            self.cache[old_w_page_index as usize][old_w_index as usize];
+                            self.cache[old_w_page_index as usize][old_w_index as usize].clone();
                         new_w_index += 1;
                         if new_w_index == self.page_size {
                             new_w_page_index += 1;
@@ -288,7 +287,7 @@ where
                 let mut n_r_page_index = self.r_page_index;
                 for i in 0..self.size() {
                     self.cache[n_r_page_index as usize][n_r_index as usize] =
-                        self.cache[r_page_index as usize][r_index as usize];
+                        self.cache[r_page_index as usize][r_index as usize].clone();
                     r_index += 1;
                     if (r_index == self.page_size) {
                         r_page_index += 1;
@@ -303,7 +302,7 @@ where
 
                 let mut w_index = self.w_index;
                 for i in 0..target_len {
-                    self.cache[self.w_page_index as usize][w_index as usize] = data[i as usize];
+                    self.cache[self.w_page_index as usize][w_index as usize] = data[i as usize].clone();
                     w_index += 1;
                     if w_index == self.page_size {
                         w_index = 0;
@@ -334,10 +333,9 @@ where
                 self.w_page_index = (self.w_page_index + 1) % self.buf_length;
                 self.w_index = 0;
             }
-            println!("wrote_size:{}", wrote_size);
             for i in 0..wrote_size {
                 //fix me
-                self.cache[w_page_index as usize][(w_index + i) as usize] = data[i as usize];
+                self.cache[w_page_index as usize][(w_index + i) as usize] = data[i as usize].clone();
             }
             index -= wrote_size;
         }
@@ -524,7 +522,6 @@ mod tests {
         buf.write(vec![255, 12, 1, 2, 3, 4, 5, 6, 2]);
 
         buf.write(vec![0; 4096 * 2]);
-        println!("size:{}", buf.size());
         assert!(buf.is_full());
         buf.read_all();
         assert_eq!(buf.size(), 0);
