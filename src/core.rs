@@ -1,9 +1,9 @@
-use std::borrow::{ BorrowMut};
+use crate::core::BufferCacheMode::{dynamic, fixed};
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::DerefMut;
 use std::rc::Rc;
-use crate::core::BufferCacheMode::{dynamic, fixed};
 
 /**
  *@Project: ringbuf
@@ -13,229 +13,213 @@ use crate::core::BufferCacheMode::{dynamic, fixed};
  *@Description:
  */
 
-
 pub struct MsgQueue<T> {
-    // buf:HashMap<String,BufferCache>,
-    inner:Rc<RefCell<MsgQueueInner<T>>>,
-    serialNo:u64,
+    inner: Rc<RefCell<MsgQueueInner<T>>>,
+    serialNo: u64,
 }
 
-unsafe impl<T> Sync for MsgQueue<T>
-{
+unsafe impl<T> Sync for MsgQueue<T> {}
+unsafe impl<T> Send for MsgQueue<T> {}
 
-}
-unsafe impl<T> Send for MsgQueue<T>
-{
-
-}
-
-
-//main
 impl<T> MsgQueue<T>
-    where T:Default + Clone + Copy
+where
+    T: Default + Clone + Copy,
 {
-    pub fn new() -> MsgQueue<T>{
-        let inner = Rc::new(RefCell::new(MsgQueueInner{
-            buf:HashMap::new(),
+    pub fn new() -> MsgQueue<T> {
+        let inner = Rc::new(RefCell::new(MsgQueueInner {
+            buf: HashMap::new(),
         }));
-        MsgQueue{
+        MsgQueue {
             inner: inner.clone(),
-            serialNo:0
+            serialNo: 0,
         }
     }
 
-    pub fn add_producer(&mut self) -> MsgQueueWriter<T>{
-        MsgQueueWriter{
-            inner: self.inner.clone()
+    pub fn add_producer(&mut self) -> MsgQueueWriter<T> {
+        MsgQueueWriter {
+            inner: self.inner.clone(),
         }
     }
-    pub fn get_consumer(&mut self,id:u64)->MsgQueueReader<T>{
+    pub fn get_consumer(&mut self, id: u64) -> MsgQueueReader<T> {
         let mut buf = (*self.inner).borrow_mut();
         buf.add_buffer_cache(id);
-        MsgQueueReader{
+        MsgQueueReader {
             id: id,
-            inner: self.inner.clone()
+            inner: self.inner.clone(),
         }
     }
 
-    pub fn add_consumer(&mut self)->MsgQueueReader<T>{
+    pub fn add_consumer(&mut self) -> MsgQueueReader<T> {
         let id = self.serialNo;
         self.serialNo += 1;
         let mut buf = (*self.inner).borrow_mut();
         buf.add_buffer_cache(id);
-        MsgQueueReader{
+        MsgQueueReader {
             id: id,
-            inner: self.inner.clone()
+            inner: self.inner.clone(),
         }
     }
-    pub fn get_consumer_count(&self) -> u64{
+    pub fn get_consumer_count(&self) -> u64 {
         (*self.inner).borrow().buf.len() as u64
-
     }
 }
 
-
-pub struct MsgQueueInner<T>{
-    buf:HashMap<u64,BufferCache<T>>,
+pub struct MsgQueueInner<T> {
+    buf: HashMap<u64, BufferCache<T>>,
 }
 
 impl<T> MsgQueueInner<T>
-where T:Default+Clone+Copy
+where
+    T: Default + Clone + Copy,
 {
-    pub fn write(&mut self,data:Vec<T>){
-    }
-    pub fn read(&mut self,id:u64,size:u64)->Vec<T>{
+    pub fn write(&mut self, data: Vec<T>) {}
+    pub fn read(&mut self, id: u64, size: u64) -> Vec<T> {
         self.buf.get_mut(&id).unwrap().read(size)
     }
 
-    pub fn add_buffer_cache(&mut self, id:u64){
-        if !self.buf.contains_key(&id){
-            self.buf.insert(id,BufferCache::new());
+    pub fn add_buffer_cache(&mut self, id: u64) {
+        if !self.buf.contains_key(&id) {
+            self.buf.insert(id, BufferCache::new());
         }
     }
 
-    pub fn get_buffer_cache(&mut self, id:u64) -> Option<&mut BufferCache<T>> {
-        if !self.buf.contains_key(&id){
-            self.buf.insert(id,BufferCache::new());
+    pub fn get_buffer_cache(&mut self, id: u64) -> Option<&mut BufferCache<T>> {
+        if !self.buf.contains_key(&id) {
+            self.buf.insert(id, BufferCache::new());
         }
         self.buf.get_mut(&id)
     }
-
 }
 
-
-pub struct MsgQueueReader<T>
-{
-    id:u64,
-    inner:Rc<RefCell<MsgQueueInner<T>>>,
+pub struct MsgQueueReader<T> {
+    id: u64,
+    inner: Rc<RefCell<MsgQueueInner<T>>>,
 }
 
-pub struct MsgQueueWriter<T>
-{
-    inner:Rc<RefCell<MsgQueueInner<T>>>,
+pub struct MsgQueueWriter<T> {
+    inner: Rc<RefCell<MsgQueueInner<T>>>,
 }
 
 impl<T> MsgQueueReader<T>
-    where T:Default + Clone + Copy
+where
+    T: Default + Clone + Copy,
 {
-    pub fn read(&mut self, size:u64)->Vec<T>{
-        // let buf = self.inner.borrow_mut().get_mut().buf[&self.id];
+    pub fn read(&mut self, size: u64) -> Vec<T> {
         let mut buf = (*self.inner).borrow_mut();
-        // buf.buf.get(&self.id)
-        buf.read(self.id,size)
+        buf.read(self.id, size)
     }
-    pub fn read_all(&mut self){
+    pub fn read_all(&mut self) {
         let size = self.size();
-        self.read( size);
+        self.read(size);
     }
-    pub fn size(&mut self)->u64{
+    pub fn size(&mut self) -> u64 {
         let mut buf = (*self.inner).borrow_mut();
         let bc = buf.get_buffer_cache(self.id).unwrap();
         bc.size
     }
 
-    pub fn id(&self)->u64{
+    pub fn id(&self) -> u64 {
         self.id
     }
-
 }
 impl<T> MsgQueueWriter<T>
-    where T:Default + Clone + Copy
+where
+    T: Default + Clone + Copy,
 {
-    pub fn write(&self,data:Vec<T>){
-        println!("writing size:{}",(*self.inner).borrow_mut().buf.len());
-        for (index,buf) in (*self.inner).borrow_mut().buf.iter_mut(){
+    pub fn write(&self, data: Vec<T>) {
+        println!("writing size:{}", (*self.inner).borrow_mut().buf.len());
+        for (index, buf) in (*self.inner).borrow_mut().buf.iter_mut() {
             buf.write(data.to_vec());
         }
     }
 }
 
-#[derive(Clone,Copy,PartialEq,Debug)]
-enum BufferCacheMode{
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum BufferCacheMode {
     fixed,
     dynamic,
 }
 
 // BufferCache<T> is implemented with a multi-block circular buffer.
 //
-#[derive(PartialEq)]
-pub struct BufferCache<T>{
-    cache:Vec<Vec<T>>,
-    mode:BufferCacheMode,
-    buf_length:u64,//cache.size()
-    page_size:u64,
-    w_index:u64,
-    r_index:u64,
-    size:u64,
-    w_page_index:u64,
-    r_page_index:u64,
-
+pub struct BufferCache<T> {
+    cache: Vec<Vec<T>>,
+    mode: BufferCacheMode,
+    buf_length: u64, //cache.size()
+    page_size: u64,
+    w_index: u64,
+    r_index: u64,
+    size: u64,
+    w_page_index: u64,
+    r_page_index: u64,
 }
 
 //using capacity()-1 == size() as the sign of buf is full.
 impl<T> BufferCache<T>
-where T:Default + Clone + Copy
+where
+    T: Default + Clone + Copy,
 {
-    pub fn new () -> BufferCache<T> {
+    pub fn new() -> BufferCache<T> {
         let page_size = 4096;
         let buf_length = 2;
         let buf_cache = vec![vec![T::default(); page_size]; buf_length];
-        BufferCache{
+        BufferCache {
             cache: buf_cache,
             mode: BufferCacheMode::fixed,
             buf_length: buf_length as u64, //default: two buffer blocks
-            page_size: page_size as u64, //page size is 4k
-            w_index: 0,//
+            page_size: page_size as u64,   //page size is 4k
+            w_index: 0,                    //
             r_index: 0,
             size: 0,
             w_page_index: 0,
-            r_page_index: 0
+            r_page_index: 0,
         }
     }
     //fixed mode:the coming data will overlap the exist data;
-    pub fn write(&mut self,data:Vec<T>){
+    pub fn write(&mut self, data: Vec<T>) {
         let target_len = data.len() as u64;
         //only fixed mode need to calculate the
-        if target_len > self.capacity()-self.size(){
+        if target_len > self.capacity() - self.size() {
             if self.mode == fixed {
-                if(target_len >= self.capacity()){
+                if (target_len >= self.capacity()) {
                     //only get the capacity size data
-                    let start_data_index = target_len-self.capacity()-1;
-                    for i in 0..self.buf_length{
-                        for j in 0..self.page_size{
-                            self.cache[i as usize][j as usize] = data[(start_data_index + i*self.page_size + j) as usize];
+                    let start_data_index = target_len - self.capacity() - 1;
+                    for i in 0..self.buf_length {
+                        for j in 0..self.page_size {
+                            self.cache[i as usize][j as usize] =
+                                data[(start_data_index + i * self.page_size + j) as usize];
                         }
                     }
                     self.size = self.buf_length * self.page_size - 1;
                     self.r_index = 0;
                     self.r_page_index = 0;
                     self.w_index = self.page_size - 1;
-                    self.w_page_index = self.buf_length-1;
-                }else{
+                    self.w_page_index = self.buf_length - 1;
+                } else {
                     let mut start_data_index = 0;
                     let mut a_page_index = self.w_page_index;
                     let mut a_index = self.w_index;
-                    for i in 0..target_len{
+                    for i in 0..target_len {
                         self.cache[a_page_index as usize][a_index as usize] = data[i as usize];
                         a_index += 1;
-                        if a_index == self.page_size{
+                        if a_index == self.page_size {
                             a_index = 0;
                             a_page_index = (a_page_index + 1) & self.buf_length;
                         }
                     }
-                    self.w_page_index = a_page_index ;
+                    self.w_page_index = a_page_index;
                     self.w_index = a_index;
                     if a_index + 1 == self.page_size {
                         self.r_index = 0;
-                        self.r_page_index = (self.r_page_index +1)%self.buf_length;
-                    }else{
+                        self.r_page_index = (self.r_page_index + 1) % self.buf_length;
+                    } else {
                         self.r_index = a_index + 1;
                         self.r_page_index = a_page_index;
                     }
                     self.size = self.capacity();
                 }
                 //some data will be overlapped
-            }else if self.mode == dynamic{
+            } else if self.mode == dynamic {
                 //expand a new vector for store
 
                 // self.buf_length += 1;
@@ -246,11 +230,16 @@ where T:Default + Clone + Copy
                 // self.cache.resize()
                 self.size += target_len;
 
-                let target_buf_length = (self.buf_length + math::round::ceil(target_len as f64 / self.page_size as f64,0) as u64) * 2;
+                let target_buf_length = (self.buf_length
+                    + math::round::ceil(target_len as f64 / self.page_size as f64, 0) as u64)
+                    * 2;
                 let old_buf_length = self.buf_length;
                 self.buf_length = target_buf_length;
-                self.cache.resize(target_buf_length as usize, vec![T::default(); self.page_size as usize]);
-                if(self.w_page_index <= self.r_page_index && self.w_index <= self.r_index) {
+                self.cache.resize(
+                    target_buf_length as usize,
+                    vec![T::default(); self.page_size as usize],
+                );
+                if (self.w_page_index <= self.r_page_index && self.w_index <= self.r_index) {
                     //r < w
                     let mut new_w_index = self.w_index;
                     let mut new_w_page_index = old_buf_length;
@@ -259,7 +248,8 @@ where T:Default + Clone + Copy
                     let mut old_w_index = self.w_index;
                     let mut old_w_page_index = self.w_page_index;
                     for i in 0..(self.page_size * self.w_page_index + self.w_index) {
-                        self.cache[new_w_page_index as usize][new_w_index as usize] = self.cache[old_w_page_index as usize][old_w_index as usize];
+                        self.cache[new_w_page_index as usize][new_w_index as usize] =
+                            self.cache[old_w_page_index as usize][old_w_index as usize];
                         new_w_index += 1;
                         if new_w_index == self.page_size {
                             new_w_page_index += 1;
@@ -283,15 +273,16 @@ where T:Default + Clone + Copy
 
                 let mut n_r_index = self.r_index;
                 let mut n_r_page_index = self.r_page_index;
-                for i in 0..self.size(){
-                    self.cache[n_r_page_index as usize][n_r_index as usize] = self.cache[r_page_index as usize][r_index as usize];
+                for i in 0..self.size() {
+                    self.cache[n_r_page_index as usize][n_r_index as usize] =
+                        self.cache[r_page_index as usize][r_index as usize];
                     r_index += 1;
-                    if(r_index == self.page_size){
+                    if (r_index == self.page_size) {
                         r_page_index += 1;
                         r_index = 0;
                     }
                     n_r_index += 1;
-                    if(n_r_index == self.page_size){
+                    if (n_r_index == self.page_size) {
                         n_r_page_index += 1;
                         n_r_index = 0;
                     }
@@ -301,7 +292,7 @@ where T:Default + Clone + Copy
                 for i in 0..target_len {
                     self.cache[self.w_page_index as usize][w_index as usize] = data[i as usize];
                     w_index += 1;
-                    if w_index == self.page_size{
+                    if w_index == self.page_size {
                         w_index = 0;
                         self.w_page_index += 1;
                     }
@@ -312,36 +303,33 @@ where T:Default + Clone + Copy
                 // for i in self.size{
                 //     self.size
                 // }
-
-
             }
-            return
+            return;
         }
         let mut index = target_len;
         while index != 0 {
             let mut free_space = 0;
-            let mut wrote_size = self.page_size-self.w_index;
+            let mut wrote_size = self.page_size - self.w_index;
 
             let mut w_index = self.w_index;
             let mut w_page_index = self.w_page_index;
 
-            if index < wrote_size{
+            if index < wrote_size {
                 wrote_size = index;
                 self.w_index += index;
-            }else{
-                self.w_page_index = (self.w_page_index+1) % self.buf_length;
+            } else {
+                self.w_page_index = (self.w_page_index + 1) % self.buf_length;
                 self.w_index = 0;
             }
-            println!("wrote_size:{}",wrote_size);
-            for i in 0..wrote_size{
+            println!("wrote_size:{}", wrote_size);
+            for i in 0..wrote_size {
                 //fix me
-                self.cache[w_page_index as usize][(w_index+i) as usize] = data[i as usize];
+                self.cache[w_page_index as usize][(w_index + i) as usize] = data[i as usize];
             }
             index -= wrote_size;
         }
         self.size += target_len;
     }
-
 
     // current unconsumed data
     pub fn size(&self) -> u64 {
@@ -350,12 +338,12 @@ where T:Default + Clone + Copy
 
     //total buf capacity
     pub fn capacity(&self) -> u64 {
-        if self.mode == fixed{
-            self.page_size*self.buf_length - 1
-        }else{
+        if self.mode == fixed {
+            self.page_size * self.buf_length - 1
+        } else {
             //in dynamic mode, capacity is no meaningful
             //TODO Does dynamic uses the same strategy like fixed
-            self.page_size*self.buf_length
+            self.page_size * self.buf_length
         }
     }
 
@@ -364,23 +352,23 @@ where T:Default + Clone + Copy
     }
 
     //only read available data
-    pub fn read(&mut self, mut length: u64) ->Vec<T>{
+    pub fn read(&mut self, mut length: u64) -> Vec<T> {
         let mut lens = length;
         //check whether buf has enough data for reading
-        if lens > self.size(){
+        if lens > self.size() {
             lens = self.size();
         }
         if lens == 0 {
-            return vec![]
+            return vec![];
         }
         let mut res = vec![];
-        while lens != 0{
+        while lens != 0 {
             let mut read_size = 0;
-            let read_index_start = self.r_index ;
+            let read_index_start = self.r_index;
             let mut read_index_end = self.r_index;
             let cur_page_readable_size = (self.page_size - self.r_index);
             let page_index = self.r_page_index;
-            if self.r_page_index == self.w_page_index{
+            if self.r_page_index == self.w_page_index {
                 //in the same page
                 if self.r_index > self.w_index {
                     // cache layout
@@ -394,12 +382,12 @@ where T:Default + Clone + Copy
                         //current page data is enough
                         read_index_end = read_index_start + lens;
                         self.r_index += lens as u64;
-                    }else{
+                    } else {
                         read_index_end = read_index_start + cur_page_readable_size;
                         self.r_index = 0;
                         self.read_page_add();
                     }
-                }else{
+                } else {
                     // cache layout
                     //··· free space， --- used space             index
                     // ··········································  0
@@ -430,7 +418,7 @@ where T:Default + Clone + Copy
                 if cur_page_readable_size > lens {
                     read_index_end = read_index_start + lens;
                     self.r_index += lens;
-                }else{
+                } else {
                     read_index_end = read_index_start + cur_page_readable_size;
                     self.r_index = 0;
                     self.read_page_add();
@@ -439,8 +427,13 @@ where T:Default + Clone + Copy
 
             let rs = read_index_start as usize;
             let re = read_index_end as usize;
-            res.append(self.cache[page_index as usize][rs..re].to_vec().clone().as_mut());
-            lens -= (read_index_end-read_index_start);
+            res.append(
+                self.cache[page_index as usize][rs..re]
+                    .to_vec()
+                    .clone()
+                    .as_mut(),
+            );
+            lens -= (read_index_end - read_index_start);
         }
         self.size -= length;
         if self.size == 0 {
@@ -455,23 +448,23 @@ where T:Default + Clone + Copy
         res
     }
 
-    pub fn read_all(&mut self) -> Vec<T>{
+    pub fn read_all(&mut self) -> Vec<T> {
         // self.read(self.size())
         vec![]
     }
 
-    fn read_page_add(&mut self){
-        self.r_page_index = (self.r_page_index +1 )%self.buf_length;
+    fn read_page_add(&mut self) {
+        self.r_page_index = (self.r_page_index + 1) % self.buf_length;
     }
 
     pub fn mode(&self) -> BufferCacheMode {
         self.mode
     }
 
-    pub fn set_fixed_mode(&mut self, buf_length:u64, page_size:u64){
+    pub fn set_fixed_mode(&mut self, buf_length: u64, page_size: u64) {
         self.buf_length = buf_length;
         self.page_size = page_size;
-        self.cache = vec![vec![T::default();page_size as usize];buf_length as usize];
+        self.cache = vec![vec![T::default(); page_size as usize]; buf_length as usize];
         self.mode = BufferCacheMode::fixed;
         self.w_index = 0;
         self.r_index = 0;
@@ -479,10 +472,10 @@ where T:Default + Clone + Copy
         self.w_page_index = 0;
         self.r_page_index = 0;
     }
-    pub fn set_dynamic_mode(&mut self, page_size:u64){
-        self.buf_length = 2;//default buf length is 2
+    pub fn set_dynamic_mode(&mut self, page_size: u64) {
+        self.buf_length = 2; //default buf length is 2
         self.page_size = page_size;
-        self.cache = vec![vec![T::default();page_size as usize];self.buf_length as usize];
+        self.cache = vec![vec![T::default(); page_size as usize]; self.buf_length as usize];
         self.mode = BufferCacheMode::dynamic;
         self.w_index = 0;
         self.r_index = 0;
@@ -491,100 +484,94 @@ where T:Default + Clone + Copy
         self.r_page_index = 0;
     }
 
-    pub fn readable(&self)->bool{
+    pub fn readable(&self) -> bool {
         self.size() != 0
     }
 }
 
 #[cfg(test)]
-mod tests{
+mod tests {
     use crate::core::{BufferCache, BufferCacheMode};
 
     // #[test]
-    fn test_buff_cache(){
+    fn test_buff_cache() {
         let mut buf = BufferCache::new();
-        assert_eq!(buf.mode(),BufferCacheMode::fixed);
-        assert_eq!(buf.size(),0);
-        assert_eq!(buf.capacity(),4096 * 2 - 1);
-        assert_eq!(buf.read(3).len(),0);
-        buf.write(vec![10,12]);
-        assert_eq!(buf.size(),2);
-        assert_eq!(buf.read(2).len(),2);
+        assert_eq!(buf.mode(), BufferCacheMode::fixed);
+        assert_eq!(buf.size(), 0);
+        assert_eq!(buf.capacity(), 4096 * 2 - 1);
+        assert_eq!(buf.read(3).len(), 0);
+        buf.write(vec![10, 12]);
+        assert_eq!(buf.size(), 2);
+        assert_eq!(buf.read(2).len(), 2);
 
-        buf.write(vec![10,12]);
-        buf.write(vec![10,12]);
-        buf.write(vec![10,12]);
-        buf.write(vec![10,12]);
-        buf.write(vec![255,12,1,2,3,4,5,6,2]);
+        buf.write(vec![10, 12]);
+        buf.write(vec![10, 12]);
+        buf.write(vec![10, 12]);
+        buf.write(vec![10, 12]);
+        buf.write(vec![255, 12, 1, 2, 3, 4, 5, 6, 2]);
 
-        buf.write(vec![0;4096*2]);
-        println!("size:{}",buf.size());
+        buf.write(vec![0; 4096 * 2]);
+        println!("size:{}", buf.size());
         assert!(buf.is_full());
         buf.read_all();
-        assert_eq!(buf.size(),0);
-        buf.write(vec![0;4096*3]);
+        assert_eq!(buf.size(), 0);
+        buf.write(vec![0; 4096 * 3]);
         assert!(buf.is_full());
         buf.read(4096);
-        assert_eq!(buf.size(),4095);
+        assert_eq!(buf.size(), 4095);
     }
 
-
     // #[test]
-    fn test_overlap(){
+    fn test_overlap() {
         let mut buf = BufferCache::new();
         println!("start");
-        buf.write(vec![0;6000]);
+        buf.write(vec![0; 6000]);
         println!("end");
-        assert_eq!(buf.w_index,6000-4096);
-        assert_eq!(buf.w_page_index,1);
+        assert_eq!(buf.w_index, 6000 - 4096);
+        assert_eq!(buf.w_page_index, 1);
         //read 0,0 write 1,4095
-        buf.write(vec![0;4096*3]);
+        buf.write(vec![0; 4096 * 3]);
 
         //read 0,2000 write 1,4095
         buf.read(2000);
 
-        assert_eq!(buf.r_index,2000);
+        assert_eq!(buf.r_index, 2000);
         //read 0,2000 write 0,999
-        buf.write(vec![0;1000]);
-        assert_eq!(buf.r_index,2000);
-        assert_eq!(buf.r_page_index,0);
-        assert_eq!(buf.w_index,999);
-        assert_eq!(buf.w_page_index,0);
+        buf.write(vec![0; 1000]);
+        assert_eq!(buf.r_index, 2000);
+        assert_eq!(buf.r_page_index, 0);
+        assert_eq!(buf.w_index, 999);
+        assert_eq!(buf.w_page_index, 0);
         //read 1,
-        buf.write(vec![0;3095]);
-        assert_eq!(buf.is_full(),true);
-        assert_eq!(buf.r_index,4095);
-        assert_eq!(buf.w_index,4094);
-        assert_eq!(buf.r_page_index,0);
-        assert_eq!(buf.w_page_index,0);
+        buf.write(vec![0; 3095]);
+        assert_eq!(buf.is_full(), true);
+        assert_eq!(buf.r_index, 4095);
+        assert_eq!(buf.w_index, 4094);
+        assert_eq!(buf.r_page_index, 0);
+        assert_eq!(buf.w_page_index, 0);
 
         buf.read(200);
-        assert_eq!(buf.r_index,199);
-        assert_eq!(buf.w_index,4094);
-        assert_eq!(buf.r_page_index,1);
-        assert_eq!(buf.w_page_index,0);
+        assert_eq!(buf.r_index, 199);
+        assert_eq!(buf.w_index, 4094);
+        assert_eq!(buf.r_page_index, 1);
+        assert_eq!(buf.w_page_index, 0);
 
-        buf.write(vec![0;100]);
-        assert_eq!(buf.r_index,199);
-        assert_eq!(buf.w_index,98);
-        assert_eq!(buf.r_page_index,1);
-        assert_eq!(buf.w_page_index,1);
+        buf.write(vec![0; 100]);
+        assert_eq!(buf.r_index, 199);
+        assert_eq!(buf.w_index, 98);
+        assert_eq!(buf.r_page_index, 1);
+        assert_eq!(buf.w_page_index, 1);
     }
-
 
     #[test]
-    fn test_dynamic_mode(){
+    fn test_dynamic_mode() {
         let mut buf = BufferCache::new();
         buf.set_dynamic_mode(4096);
-        buf.write(vec![0;4096*2]);
-        assert_eq!(buf.is_full(),true);
-        assert_eq!(buf.size(),4096*2);
-        buf.write(vec![0;1]);
-        assert_eq!(buf.size(),4096*2+1);
-        assert_eq!(buf.capacity(),4096*6);
+        buf.write(vec![0; 4096 * 2]);
+        assert_eq!(buf.is_full(), true);
+        assert_eq!(buf.size(), 4096 * 2);
+        buf.write(vec![0; 1]);
+        assert_eq!(buf.size(), 4096 * 2 + 1);
+        assert_eq!(buf.capacity(), 4096 * 6);
     }
-
-
-
 }
-
