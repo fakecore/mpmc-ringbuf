@@ -11,5 +11,4 @@ repository = "https://github.com/fakecore/mpmc-ringbuf"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = "1.22.0"
 libmath = "0.2.1"
