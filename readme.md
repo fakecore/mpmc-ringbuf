@@ -1,4 +1,4 @@
-# mpsc-ringbuf
+# mpmc-ringbuf
 A Rust MPMC(multiple producer and multiple consumers) ringbuf queue
 
 
