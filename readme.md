@@ -75,4 +75,6 @@ assert_eq!(c2.size(),1000);
 
 
 ## feature
+fixed mode: fixed data block size and with data overwrite  
 
+dynamic mode: dynamic data block size

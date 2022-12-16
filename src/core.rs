@@ -1,9 +1,15 @@
 //! The implementation of mpmc-ringbuf.
 //!
+//! fixed mode(default): buffer block is fixed, can set it with fn `set_fixed()`
+//!
+//! dynamic mode: buffer block is fixed, can set it with fn `set_dynamic()`
+//!
 use crate::core::BufferCacheMode::{Dynamic, Fixed};
+use core::panicking::panic;
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::os::unix::raw::mode_t;
 use std::rc::Rc;
 
 /// main struct for controlling buffer blocks
@@ -14,11 +20,13 @@ use std::rc::Rc;
 pub struct MsgQueue<T> {
     inner: Rc<RefCell<MsgQueueInner<T>>>,
     serial_no: u64,
+    running: bool,
 }
 
 unsafe impl<T> Sync for MsgQueue<T> {}
 unsafe impl<T> Send for MsgQueue<T> {}
 
+/// @TODO MsgQueue should manage the exist blocks for querying
 impl<T> MsgQueue<T>
 where
     T: Default + Clone,
@@ -26,11 +34,33 @@ where
     pub fn new() -> MsgQueue<T> {
         let inner = Rc::new(RefCell::new(MsgQueueInner {
             buf: HashMap::new(),
+            mode: None,
+            buf_size: 0,
+            block_length: 0,
         }));
+
         MsgQueue {
             inner: inner.clone(),
             serial_no: 0,
+            running: false,
         }
+    }
+
+    /// only can call before using `get_consumer` and `add_consumer`
+    pub fn set_dynamic(&mut self, block_length: u64) {
+        if self.running == true {
+            panic!("Rb is running, please config before running");
+            return;
+        }
+        (*self.inner).borrow_mut().set_dynamic(block_length);
+    }
+
+    pub fn set_fixed(&mut self, block_length: u64, buf_size: u64) {
+        if self.running == true {
+            panic!("Rb is running, please config before running");
+            return;
+        }
+        (*self.inner).borrow_mut().set_fixed(block_length, buf_size);
     }
 
     pub fn add_producer(&mut self) -> MsgQueueWriter<T> {
@@ -39,7 +69,13 @@ where
         }
     }
 
+    /// get_consumer won't panic even buffer block doesn't exist,
+    /// system will check the matched block and create it when it doesn't exist.
     pub fn get_consumer(&mut self, id: u64) -> MsgQueueReader<T> {
+        if self.running == false {
+            self.running = true;
+        }
+
         let mut buf = (*self.inner).borrow_mut();
         buf.add_buffer_cache(id);
         MsgQueueReader {
@@ -48,7 +84,12 @@ where
         }
     }
 
+    //
     pub fn add_consumer(&mut self) -> MsgQueueReader<T> {
+        if self.running == false {
+            self.running = true;
+        }
+
         let id = self.serial_no;
         self.serial_no += 1;
         let mut buf = (*self.inner).borrow_mut();
@@ -66,10 +107,17 @@ where
     pub fn delete_consumer(&mut self, id: u64) {
         (*self.inner).borrow_mut().delete_buffer_cache(id)
     }
+
+    pub fn is_running(&self) -> bool {
+        self.running
+    }
 }
 
 struct MsgQueueInner<T> {
     buf: HashMap<u64, BufferCache<T>>,
+    mode: Option<BufferCacheMode>,
+    buf_size: u64,
+    block_length: u64,
 }
 
 impl<T> MsgQueueInner<T>
@@ -78,13 +126,35 @@ where
 {
     pub fn add_buffer_cache(&mut self, id: u64) {
         if !self.buf.contains_key(&id) {
-            self.buf.insert(id, BufferCache::new());
+            let mut buffer_cache = BufferCache::new();
+            match self.mode {
+                None => {}
+                Some(mode) => {
+                    if mode == Fixed {
+                        buffer_cache.set_fixed_mode(self.buf_size, self.block_length);
+                    } else if mode == Dynamic {
+                        buffer_cache.set_dynamic_mode(self.block_length);
+                    }
+                }
+            }
+            self.buf.insert(id, buffer_cache);
         }
     }
 
     pub fn get_buffer_cache(&mut self, id: u64) -> Option<&mut BufferCache<T>> {
         if !self.buf.contains_key(&id) {
-            self.buf.insert(id, BufferCache::new());
+            let mut buffer_cache = BufferCache::new();
+            match self.mode {
+                None => {}
+                Some(mode) => {
+                    if mode == Fixed {
+                        buffer_cache.set_fixed_mode(self.buf_size, self.block_length);
+                    } else if mode == Dynamic {
+                        buffer_cache.set_dynamic_mode(self.block_length);
+                    }
+                }
+            }
+            self.buf.insert(id, buffer_cache);
         }
         self.buf.get_mut(&id)
     }
@@ -93,6 +163,17 @@ where
         if !self.buf.contains_key(&id) {
             self.buf.remove(&id);
         }
+    }
+
+    pub fn set_dynamic(&mut self, block_length: u64) {
+        self.mode = Some(Dynamic);
+        self.block_length = block_length;
+    }
+
+    pub fn set_fixed(&mut self, block_length: u64, buf_size: u64) {
+        self.mode = Some(Fixed);
+        self.block_length = block_length;
+        self.buf_size = buf_size;
     }
 }
 
@@ -656,5 +737,27 @@ mod tests {
         for i in data {
             print!("{:?} ", i);
         }
+    }
+
+    #[test]
+    fn test_config() {
+        let mut msg_queue = Rc::new(RefCell::new(MsgQueue::<String>::new()));
+        assert_eq!(msg_queue.borrow_mut().is_running(), false);
+        msg_queue.borrow_mut().set_dynamic(4096);
+        let mut c1 = msg_queue.borrow_mut().add_consumer();
+        let mut p1 = msg_queue.borrow_mut().add_producer();
+        assert_eq!(msg_queue.borrow_mut().is_running(), true);
+        p1.write(vec!["hello".to_string(), "world".to_string()]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_config_and_get_panic() {
+        let mut msg_queue = Rc::new(RefCell::new(MsgQueue::<String>::new()));
+        assert_eq!(msg_queue.borrow_mut().is_running(), false);
+        let mut c1 = msg_queue.borrow_mut().add_consumer();
+        let mut p1 = msg_queue.borrow_mut().add_producer();
+        assert_eq!(msg_queue.borrow_mut().is_running(), true);
+        msg_queue.borrow_mut().set_dynamic(4096);
     }
 }

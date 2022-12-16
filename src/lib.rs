@@ -1,10 +1,13 @@
 //! mpmc-ringbuf focuses on offering a easy and efficient way to share data between different instance.
 //! And we offer the different mode `Fixed`,`Dynamic` to satisfy the demand.
 //!
+//! see more detail on core module pages
+//!
 //! simple example
 //!
 //! single thread
 //! ```rust
+//!  use mpmc_ringbuf::core::MsgQueue;
 //!  let mut msg_queue: MsgQueue<u8> = MsgQueue::new();
 //!  let mut writer1 = msg_queue.add_producer();
 //!  let mut read1 = msg_queue.add_consumer();
@@ -20,4 +23,6 @@
 //!  assert_eq!(read1.size(), 200);
 //!  assert_eq!(read2.size(), 50);
 //! ```
+//!
+#![feature(core_panic)]
 pub mod core;
