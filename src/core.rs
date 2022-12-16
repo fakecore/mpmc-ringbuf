@@ -1,13 +1,11 @@
-use crate::core::BufferCacheMode::{dynamic, fixed};
+use crate::core::BufferCacheMode::{Dynamic, Fixed};
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::DerefMut;
-use std::process::id;
 use std::rc::Rc;
 
 /**
- *@Project: ringbuf
+ *@Project: mpmc-ringbuf
  *@FileName: core.rs
  *@Author: FakeCore
  *@CreateTime: 2022-12-06 00:42
@@ -16,7 +14,7 @@ use std::rc::Rc;
 
 pub struct MsgQueue<T> {
     inner: Rc<RefCell<MsgQueueInner<T>>>,
-    serialNo: u64,
+    serial_no: u64,
 }
 
 unsafe impl<T> Sync for MsgQueue<T> {}
@@ -32,7 +30,7 @@ where
         }));
         MsgQueue {
             inner: inner.clone(),
-            serialNo: 0,
+            serial_no: 0,
         }
     }
 
@@ -46,18 +44,18 @@ where
         let mut buf = (*self.inner).borrow_mut();
         buf.add_buffer_cache(id);
         MsgQueueReader {
-            id: id,
+            id,
             inner: self.inner.clone(),
         }
     }
 
     pub fn add_consumer(&mut self) -> MsgQueueReader<T> {
-        let id = self.serialNo;
-        self.serialNo += 1;
+        let id = self.serial_no;
+        self.serial_no += 1;
         let mut buf = (*self.inner).borrow_mut();
         buf.add_buffer_cache(id);
         MsgQueueReader {
-            id: id,
+            id,
             inner: self.inner.clone(),
         }
     }
@@ -79,11 +77,6 @@ impl<T> MsgQueueInner<T>
 where
     T: Default + Clone,
 {
-    pub fn write(&mut self, data: Vec<T>) {}
-    pub fn read(&mut self, id: u64, size: u64) -> Vec<T> {
-        self.buf.get_mut(&id).unwrap().read(size)
-    }
-
     pub fn add_buffer_cache(&mut self, id: u64) {
         if !self.buf.contains_key(&id) {
             self.buf.insert(id, BufferCache::new());
@@ -115,13 +108,13 @@ pub struct MsgQueueWriter<T> {
 
 impl<T> MsgQueueReader<T>
 where
-    T: Default + Clone ,
+    T: Default + Clone,
 {
     pub fn read(&mut self, size: u64) -> Vec<T> {
         let mut buf = (*self.inner).borrow_mut();
-        buf.read(self.id, size)
+        buf.buf.get_mut(&self.id).unwrap().read(size)
     }
-    pub fn read_all(&mut self) -> Vec<T>{
+    pub fn read_all(&mut self) -> Vec<T> {
         let size = self.size();
         self.read(size)
     }
@@ -137,10 +130,10 @@ where
 }
 impl<T> MsgQueueWriter<T>
 where
-    T: Default + Clone ,
+    T: Default + Clone,
 {
     pub fn write(&self, data: Vec<T>) {
-        for (index, buf) in (*self.inner).borrow_mut().buf.iter_mut() {
+        for (_index, buf) in (*self.inner).borrow_mut().buf.iter_mut() {
             buf.write(data.to_vec());
         }
     }
@@ -148,8 +141,8 @@ where
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum BufferCacheMode {
-    fixed,
-    dynamic,
+    Fixed,
+    Dynamic,
 }
 
 // BufferCache<T> is implemented with a multi-block circular buffer.
@@ -177,7 +170,7 @@ where
         let buf_cache = vec![vec![T::default(); page_size]; buf_length];
         BufferCache {
             cache: buf_cache,
-            mode: BufferCacheMode::fixed,
+            mode: Fixed,
             buf_length: buf_length as u64, //default: two buffer blocks
             page_size: page_size as u64,   //page size is 4k
             w_index: 0,                    //
@@ -187,13 +180,13 @@ where
             r_page_index: 0,
         }
     }
-    //fixed mode:the coming data will overlap the exist data;
+    //Fixed mode:the coming data will overlap the exist data;
     pub fn write(&mut self, data: Vec<T>) {
         let target_len = data.len() as u64;
-        //only fixed mode need to calculate the
+        //only Fixed mode need to calculate the
         if target_len > self.capacity() - self.size() {
-            if self.mode == fixed {
-                if (target_len >= self.capacity()) {
+            if self.mode == Fixed {
+                if target_len >= self.capacity() {
                     //only get the capacity size data
                     let start_data_index = target_len - self.capacity() - 1;
                     for i in 0..self.buf_length {
@@ -208,11 +201,11 @@ where
                     self.w_index = self.page_size - 1;
                     self.w_page_index = self.buf_length - 1;
                 } else {
-                    let mut start_data_index = 0;
                     let mut a_page_index = self.w_page_index;
                     let mut a_index = self.w_index;
                     for i in 0..target_len {
-                        self.cache[a_page_index as usize][a_index as usize] = data[i as usize].clone();
+                        self.cache[a_page_index as usize][a_index as usize] =
+                            data[i as usize].clone();
                         a_index += 1;
                         if a_index == self.page_size {
                             a_index = 0;
@@ -231,7 +224,7 @@ where
                     self.size = self.capacity();
                 }
                 //some data will be overlapped
-            } else if self.mode == dynamic {
+            } else if self.mode == Dynamic {
                 //expand a new vector for store
 
                 // self.buf_length += 1;
@@ -251,7 +244,7 @@ where
                     target_buf_length as usize,
                     vec![T::default(); self.page_size as usize],
                 );
-                if (self.w_page_index <= self.r_page_index && self.w_index <= self.r_index) {
+                if self.w_page_index <= self.r_page_index && self.w_index <= self.r_index {
                     //r < w
                     let mut new_w_index = self.w_index;
                     let mut new_w_page_index = old_buf_length;
@@ -259,7 +252,7 @@ where
                     assert_eq!(self.w_page_index, 0);
                     let mut old_w_index = self.w_index;
                     let mut old_w_page_index = self.w_page_index;
-                    for i in 0..(self.page_size * self.w_page_index + self.w_index) {
+                    for _i in 0..(self.page_size * self.w_page_index + self.w_index) {
                         self.cache[new_w_page_index as usize][new_w_index as usize] =
                             self.cache[old_w_page_index as usize][old_w_index as usize].clone();
                         new_w_index += 1;
@@ -285,16 +278,16 @@ where
 
                 let mut n_r_index = self.r_index;
                 let mut n_r_page_index = self.r_page_index;
-                for i in 0..self.size() {
+                for _i in 0..self.size() {
                     self.cache[n_r_page_index as usize][n_r_index as usize] =
                         self.cache[r_page_index as usize][r_index as usize].clone();
                     r_index += 1;
-                    if (r_index == self.page_size) {
+                    if r_index == self.page_size {
                         r_page_index += 1;
                         r_index = 0;
                     }
                     n_r_index += 1;
-                    if (n_r_index == self.page_size) {
+                    if n_r_index == self.page_size {
                         n_r_page_index += 1;
                         n_r_index = 0;
                     }
@@ -302,28 +295,22 @@ where
 
                 let mut w_index = self.w_index;
                 for i in 0..target_len {
-                    self.cache[self.w_page_index as usize][w_index as usize] = data[i as usize].clone();
+                    self.cache[self.w_page_index as usize][w_index as usize] =
+                        data[i as usize].clone();
                     w_index += 1;
                     if w_index == self.page_size {
                         w_index = 0;
                         self.w_page_index += 1;
                     }
                 }
-                // if self.r_index != 0 {
-                //
-                // }
-                // for i in self.size{
-                //     self.size
-                // }
             }
             return;
         }
         let mut index = target_len;
         while index != 0 {
-            let mut free_space = 0;
             let mut wrote_size = self.page_size - self.w_index;
 
-            let mut w_index = self.w_index;
+            let w_index = self.w_index;
             let mut w_page_index = self.w_page_index;
 
             if index < wrote_size {
@@ -335,7 +322,8 @@ where
             }
             for i in 0..wrote_size {
                 //fix me
-                self.cache[w_page_index as usize][(w_index + i) as usize] = data[i as usize].clone();
+                self.cache[w_page_index as usize][(w_index + i) as usize] =
+                    data[i as usize].clone();
             }
             index -= wrote_size;
         }
@@ -349,21 +337,21 @@ where
 
     //total buf capacity
     pub fn capacity(&self) -> u64 {
-        if self.mode == fixed {
+        if self.mode == Fixed {
             self.page_size * self.buf_length - 1
         } else {
-            //in dynamic mode, capacity is no meaningful
-            //TODO Does dynamic uses the same strategy like fixed
+            //in Dynamic mode, capacity is no meaningful
+            //TODO Does Dynamic uses the same strategy like Fixed
             self.page_size * self.buf_length
         }
     }
 
-    pub fn is_full(&mut self) -> bool {
+    pub fn is_full(&self) -> bool {
         self.capacity() == self.size()
     }
 
     //only read available data
-    pub fn read(&mut self, mut length: u64) -> Vec<T> {
+    pub fn read(&mut self, length: u64) -> Vec<T> {
         let mut lens = length;
         //check whether buf has enough data for reading
         if lens > self.size() {
@@ -374,10 +362,9 @@ where
         }
         let mut res = vec![];
         while lens != 0 {
-            let mut read_size = 0;
             let read_index_start = self.r_index;
             let mut read_index_end = self.r_index;
-            let cur_page_readable_size = (self.page_size - self.r_index);
+            let cur_page_readable_size = self.page_size - self.r_index;
             let page_index = self.r_page_index;
             if self.r_page_index == self.w_page_index {
                 //in the same page
@@ -444,7 +431,7 @@ where
                     .clone()
                     .as_mut(),
             );
-            lens -= (read_index_end - read_index_start);
+            lens -= read_index_end - read_index_start;
         }
         self.size -= length;
         if self.size == 0 {
@@ -454,7 +441,7 @@ where
             self.r_page_index = 0;
             self.r_index = 0;
             //fixme
-            //resize in dynamic mode
+            //resize in Dynamic mode
         }
         res
     }
@@ -476,7 +463,7 @@ where
         self.buf_length = buf_length;
         self.page_size = page_size;
         self.cache = vec![vec![T::default(); page_size as usize]; buf_length as usize];
-        self.mode = BufferCacheMode::fixed;
+        self.mode = Fixed;
         self.w_index = 0;
         self.r_index = 0;
         self.size = 0;
@@ -487,7 +474,7 @@ where
         self.buf_length = 2; //default buf length is 2
         self.page_size = page_size;
         self.cache = vec![vec![T::default(); page_size as usize]; self.buf_length as usize];
-        self.mode = BufferCacheMode::dynamic;
+        self.mode = Dynamic;
         self.w_index = 0;
         self.r_index = 0;
         self.size = 0;
@@ -507,7 +494,7 @@ mod tests {
     // #[test]
     fn test_buff_cache() {
         let mut buf = BufferCache::new();
-        assert_eq!(buf.mode(), BufferCacheMode::fixed);
+        assert_eq!(buf.mode(), BufferCacheMode::Fixed);
         assert_eq!(buf.size(), 0);
         assert_eq!(buf.capacity(), 4096 * 2 - 1);
         assert_eq!(buf.read(3).len(), 0);
