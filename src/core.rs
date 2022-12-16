@@ -1,17 +1,16 @@
+//! The implementation of mpmc-ringbuf.
+//!
 use crate::core::BufferCacheMode::{Dynamic, Fixed};
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/**
- *@Project: mpmc-ringbuf
- *@FileName: core.rs
- *@Author: FakeCore
- *@CreateTime: 2022-12-06 00:42
- *@Description:
- */
-
+/// main struct for controlling buffer blocks
+/// Users should crate a new buffer block with fn `add_producer`, and explicitly delete the buffer
+/// blocks with fn `delete_consumer`
+/// If users want to add a producer and produce some data, make sure you call fn `add_producer` ahead,
+/// otherwise there are none data block for storing the data.
 pub struct MsgQueue<T> {
     inner: Rc<RefCell<MsgQueueInner<T>>>,
     serial_no: u64,
@@ -69,7 +68,7 @@ where
     }
 }
 
-pub struct MsgQueueInner<T> {
+struct MsgQueueInner<T> {
     buf: HashMap<u64, BufferCache<T>>,
 }
 
@@ -97,11 +96,13 @@ where
     }
 }
 
+/// for data reader
 pub struct MsgQueueReader<T> {
     id: u64,
     inner: Rc<RefCell<MsgQueueInner<T>>>,
 }
 
+/// for data writer
 pub struct MsgQueueWriter<T> {
     inner: Rc<RefCell<MsgQueueInner<T>>>,
 }
@@ -145,12 +146,11 @@ enum BufferCacheMode {
     Dynamic,
 }
 
-// BufferCache<T> is implemented with a multi-block circular buffer.
-//
-pub struct BufferCache<T> {
+/// BufferCache<T> is implemented with a multi-block circular buffer.
+struct BufferCache<T> {
     cache: Vec<Vec<T>>,
     mode: BufferCacheMode,
-    buf_length: u64, //cache.size()
+    buf_length: u64,
     page_size: u64,
     w_index: u64,
     r_index: u64,
@@ -489,7 +489,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::core::{BufferCache, BufferCacheMode};
+    use crate::core::{BufferCache, BufferCacheMode, MsgQueue};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
 
     // #[test]
     fn test_buff_cache() {
@@ -570,5 +574,87 @@ mod tests {
         buf.write(vec![0; 1]);
         assert_eq!(buf.size(), 4096 * 2 + 1);
         assert_eq!(buf.capacity(), 4096 * 6);
+    }
+
+    #[test]
+    fn test_single_thread_msg_queue() {
+        let mut msg_queue: MsgQueue<u8> = MsgQueue::new();
+        let mut writer1 = msg_queue.add_producer();
+        let mut read1 = msg_queue.add_consumer();
+        writer1.write(vec![10; 100]);
+        println!("{}", msg_queue.get_consumer_count());
+        println!("{}", read1.size());
+        assert_eq!(read1.size(), 100);
+        let mut read2 = msg_queue.add_consumer();
+        assert_eq!(read2.size(), 0);
+        assert_eq!(msg_queue.get_consumer_count(), 2);
+        writer1.write(vec![0; 100]);
+        assert_eq!(read1.size(), 200);
+        assert_eq!(read2.size(), 100);
+        read2.read(50);
+        assert_eq!(read1.size(), 200);
+        assert_eq!(read2.size(), 50);
+    }
+
+    #[test]
+    fn test_multi_thread_msg_queue() {
+        let mut msg_queue: Arc<Mutex<MsgQueue<u8>>> = Arc::new(Mutex::new(MsgQueue::new()));
+        let m1 = msg_queue.clone();
+        let m2 = msg_queue.clone();
+        let mut c1_id = 0;
+        let mut c2_id = 0;
+        {
+            let mut msg_lock = (*msg_queue).lock().unwrap();
+            let mut c1 = msg_lock.add_consumer();
+            let mut c2 = msg_lock.add_consumer();
+            c1_id = c1.id();
+            c2_id = c2.id();
+        }
+        assert_eq!(msg_queue.lock().unwrap().get_consumer_count(), 2);
+        let t1 = thread::spawn(move || {
+            let mut msg_lock = (*m1).lock().unwrap();
+            println!("get lock1");
+            let p = msg_lock.add_producer();
+            for i in 0..100 {
+                p.write(vec![0; 5]);
+            }
+        });
+
+        let t2 = thread::spawn(move || {
+            let mut msg_lock = (*m2).lock().unwrap();
+            println!("get lock1");
+            let p = msg_lock.add_producer();
+            for i in 0..100 {
+                p.write(vec![0; 5]);
+            }
+        });
+        t1.join();
+        t2.join();
+        {
+            let mut msg_lock = (*msg_queue).lock().unwrap();
+            assert_eq!(msg_lock.get_consumer_count(), 2);
+            let mut c1 = msg_lock.get_consumer(c1_id);
+            let mut c2 = msg_lock.get_consumer(c2_id);
+            println!("size: {} {}", c1.size(), c2.size());
+            assert_eq!(c1.size(), 1000);
+            assert_eq!(c2.size(), 1000);
+        }
+    }
+
+    #[test]
+    fn test_string() {
+        let mut msg_queue = Rc::new(RefCell::new(MsgQueue::<String>::new()));
+        let mut c1 = msg_queue.borrow_mut().add_consumer();
+        let mut p1 = msg_queue.borrow_mut().add_producer();
+        p1.write(vec!["hello".to_string(), "world".to_string()]);
+        assert_eq!(c1.size(), 2);
+        let data = c1.read_all();
+        assert_eq!(c1.size(), 0);
+        assert_eq!(data.len(), 2);
+        assert_eq!(data.get(0).unwrap().to_string(), "hello".to_string());
+        assert_eq!(data.get(1).unwrap().to_string(), "world".to_string());
+        for i in data {
+            print!("{:?} ", i);
+        }
     }
 }
