@@ -1,8 +1,12 @@
 [package]
-name = "ringbuf"
+name = "mpmc-ringbuf"
 version = "0.1.0"
 edition = "2021"
-
+description = "A Rust mpmc-ringbuf queue"
+readme = "./readme.md"
+license-file = "LICENSE.md"
+authors = ["fakecore"]
+repository = "https://github.com/fakecore/mpmc-ringbuf"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
